@@ -167,7 +167,8 @@ apps:
         - "Read"
         - "Edit"
         - "Write"
-      # model: "claude-sonnet-4-6"   # 覆盖全局默认模型（可选）；sonnet/opus 别名有效，haiku 需用完整 ID: claude-haiku-4-5-20251001
+      # provider: "bailian"        # 覆盖默认供应商（可选）
+      # model: "qwen-plus"         # 覆盖该供应商的默认模型（可选）
 
 server:
   port: 8080
@@ -175,7 +176,14 @@ server:
 claude:
   timeout_minutes: 5
   max_turns: 20
-  # model: "claude-sonnet-4-6"   # 全局默认模型；sonnet/opus 别名有效，haiku 需用完整 ID: claude-haiku-4-5-20251001
+  default_provider: "anthropic"     # 默认供应商，对应 providers 中的 key
+  providers:
+    anthropic:
+      model: "sonnet"               # 默认模型
+    # bailian:
+    #   base_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+    #   auth_token: "sk-xxx"
+    #   model: "qwen-plus"
 
 session:
   worker_idle_timeout_minutes: 30   # Worker 空闲超时
@@ -200,10 +208,29 @@ claude \
   --permission-mode acceptEdits \
   --allowedTools "Bash Read Edit Write" \
   --max-turns 20 \
-  --resume <claude_session_id>   # 省略 = 新 context
+  --model <expanded_model>           # 来自 resolveProvider()
+  --settings '{"env":{...}}'         # 覆盖 ~/.claude/settings.json（非默认 provider 时）
+  --resume <claude_session_id>       # 省略 = 新 context
 ```
 
-从 `stream-json` 的 `system` 事件提取 `session_id` 写回 DB，后续调用带 `--resume` 复用 context。
+#### 模型 / 供应商注入机制（三层覆盖）
+
+1. **进程环境层**：`filterEnv()` 过滤掉 `os.Environ()` 中已有的 `ANTHROPIC_*` 变量，再 append 新值
+2. **CLI `--settings` 层**：`buildSettingsJSON()` 生成 `{"env":{"ANTHROPIC_BASE_URL":"...","ANTHROPIC_AUTH_TOKEN":"...","ANTHROPIC_MODEL":"..."}}` 传给 `--settings` 参数，优先级高于 `~/.claude/settings.json`
+3. **CLI `--model` 层**：直接通过 `--model` 参数指定，最高优先级
+
+环境变量（由 `buildClaudeEnvVars()` 构造）：
+
+```
+ANTHROPIC_BASE_URL=<mapped from provider or base_url>   # 百炼等第三方供应商
+ANTHROPIC_AUTH_TOKEN=<from auth_token>                   # 供应商 API Key
+ANTHROPIC_MODEL=<from model>                             # 模型名称
+ANTHROPIC_DEFAULT_HAIKU_MODEL=<from model>
+ANTHROPIC_DEFAULT_SONNET_MODEL=<from model>
+ANTHROPIC_DEFAULT_OPUS_MODEL=<from model>
+```
+
+对于默认 anthropic provider 且无自定义配置时，不注入任何 env / --settings，让 claude CLI 使用自身认证。
 
 ### session.Worker
 

@@ -75,11 +75,25 @@ func (e *Executor) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteRe
 	cmd.Dir = sessionDir
 	cmd.WaitDelay = 30 * time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = append(os.Environ(),
+	// Add provider/model/auth env vars when configured.
+	providerName, pc := resolveProvider(req.AppConfig, e.cfg)
+	claudeEnvVars := buildClaudeEnvVars(providerName, pc)
+
+	// Filter out ANTHROPIC_* vars from inherited env to prevent conflicts.
+	// On Linux, duplicate env keys cause getenv() to return the first match,
+	// so we must remove old values before appending new ones.
+	baseEnv := os.Environ()
+	if len(claudeEnvVars) > 0 {
+		baseEnv = filterEnv(baseEnv, "ANTHROPIC_")
+	}
+	cmd.Env = append(baseEnv,
 		"TERM=xterm-256color",
 		"FORCE_COLOR=0",
 		"WORKSPACE_DIR="+req.WorkspaceDir,
 	)
+	if len(claudeEnvVars) > 0 {
+		cmd.Env = append(cmd.Env, claudeEnvVars...)
+	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -162,8 +176,19 @@ func (e *Executor) buildArgs(prompt string, req *ExecuteRequest, sessionDir stri
 		"--max-turns", fmt.Sprintf("%d", e.cfg.Claude.MaxTurns),
 	}
 
-	if model := resolveModel(req.AppConfig, e.cfg); model != "" {
-		args = append(args, "--model", model)
+	providerName, pc := resolveProvider(req.AppConfig, e.cfg)
+
+	// --model has the highest priority (above env vars and settings.json).
+	// Used together with ANTHROPIC_MODEL env var for belt-and-suspenders coverage.
+	if pc.Model != "" {
+		args = append(args, "--model", expandModelAlias(pc.Model))
+	}
+
+	// --settings overrides ~/.claude/settings.json env vars (higher precedence).
+	// This prevents the user's global settings from clobbering provider-specific
+	// ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL.
+	if settingsJSON := buildSettingsJSON(providerName, pc); settingsJSON != "" {
+		args = append(args, "--settings", settingsJSON)
 	}
 
 	if req.ClaudeSessionID != "" {
@@ -315,17 +340,147 @@ func expandModelAlias(m string) string {
 	return m
 }
 
-// resolveModel returns the effective model for this request.
+// resolveModelFlag returns the effective model for the --model CLI flag.
 // App-level setting takes priority over the global default.
 // Short aliases (haiku/sonnet/opus) are expanded to full model IDs.
 // Returns empty string when neither is set (claude uses its built-in default).
-func resolveModel(appCfg *config.AppConfig, cfg *config.Config) string {
-	m := strings.TrimSpace(appCfg.Claude.Model)
-	if m == "" {
-		m = strings.TrimSpace(cfg.Claude.Model)
-	}
-	if m == "" {
+func resolveModelFlag(appCfg *config.AppConfig, cfg *config.Config) string {
+	_, pc := resolveProvider(appCfg, cfg)
+	if pc.Model == "" {
 		return ""
 	}
-	return expandModelAlias(m)
+	return expandModelAlias(pc.Model)
+}
+
+// providerBaseURLs maps known provider names to their default ANTHROPIC_BASE_URL.
+// Used as fallback when ProviderConfig.BaseURL is empty.
+var providerBaseURLs = map[string]string{
+	"bailian": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+}
+
+// resolveProvider determines the effective provider name and its merged config
+// for a given app. Resolution order:
+//  1. Provider name: app.claude.provider > claude.default_provider > "anthropic"
+//  2. Provider config: looked up from claude.providers[name]
+//  3. Model override: app.claude.model overrides the provider's default model
+func resolveProvider(appCfg *config.AppConfig, cfg *config.Config) (string, config.ProviderConfig) {
+	name := strings.TrimSpace(appCfg.Claude.Provider)
+	if name == "" {
+		name = strings.TrimSpace(cfg.Claude.DefaultProvider)
+	}
+	if name == "" {
+		name = "anthropic"
+	}
+
+	var pc config.ProviderConfig
+	if cfg.Claude.Providers != nil {
+		pc = cfg.Claude.Providers[name]
+	}
+
+	// App-level model overrides provider default.
+	if m := strings.TrimSpace(appCfg.Claude.Model); m != "" {
+		pc.Model = m
+	}
+
+	return name, pc
+}
+
+// filterEnv returns a copy of env with all entries whose key starts with
+// the given prefix removed. This prevents inherited env vars from shadowing
+// values we explicitly set for the subprocess.
+func filterEnv(env []string, prefix string) []string {
+	result := make([]string, 0, len(env))
+	for _, e := range env {
+		if k, _, ok := strings.Cut(e, "="); ok && strings.HasPrefix(k, prefix) {
+			continue
+		}
+		result = append(result, e)
+	}
+	return result
+}
+
+// buildSettingsJSON returns a JSON string for --settings that overrides the
+// env section of ~/.claude/settings.json. Returns "" when no override needed.
+func buildSettingsJSON(providerName string, pc config.ProviderConfig) string {
+	name := strings.ToLower(strings.TrimSpace(providerName))
+	isDefault := name == "" || name == "anthropic"
+
+	if isDefault && pc.AuthToken == "" && pc.Model == "" && pc.BaseURL == "" {
+		return ""
+	}
+
+	envMap := make(map[string]string)
+
+	baseURL := pc.BaseURL
+	if baseURL == "" {
+		baseURL = providerBaseURLs[name]
+	}
+	if baseURL != "" {
+		envMap["ANTHROPIC_BASE_URL"] = baseURL
+	}
+
+	if pc.AuthToken != "" {
+		envMap["ANTHROPIC_AUTH_TOKEN"] = pc.AuthToken
+	}
+
+	if pc.Model != "" {
+		model := expandModelAlias(pc.Model)
+		envMap["ANTHROPIC_MODEL"] = model
+		envMap["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = model
+		envMap["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
+		envMap["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
+	}
+
+	if len(envMap) == 0 {
+		return ""
+	}
+
+	settings := map[string]interface{}{
+		"env": envMap,
+	}
+	b, err := json.Marshal(settings)
+	if err != nil {
+		slog.Error("failed to marshal settings JSON", "err", err)
+		return ""
+	}
+	return string(b)
+}
+
+// buildClaudeEnvVars returns the ANTHROPIC_* environment variables to set
+// on the claude subprocess. Returns nil if using default anthropic with no
+// custom config (pure default behavior — claude CLI uses its own auth and model).
+func buildClaudeEnvVars(providerName string, pc config.ProviderConfig) []string {
+	name := strings.ToLower(strings.TrimSpace(providerName))
+	isDefault := name == "" || name == "anthropic"
+
+	if isDefault && pc.AuthToken == "" && pc.Model == "" && pc.BaseURL == "" {
+		return nil
+	}
+
+	var envs []string
+
+	// Base URL: explicit config > hardcoded fallback for known providers
+	baseURL := pc.BaseURL
+	if baseURL == "" {
+		baseURL = providerBaseURLs[name]
+	}
+	if baseURL != "" {
+		envs = append(envs, "ANTHROPIC_BASE_URL="+baseURL)
+	}
+
+	if pc.AuthToken != "" {
+		envs = append(envs, "ANTHROPIC_AUTH_TOKEN="+pc.AuthToken)
+	}
+
+	if pc.Model != "" {
+		model := expandModelAlias(pc.Model)
+		envs = append(envs,
+			"ANTHROPIC_MODEL="+model,
+			"ANTHROPIC_DEFAULT_HAIKU_MODEL="+model,
+			"ANTHROPIC_DEFAULT_SONNET_MODEL="+model,
+			"ANTHROPIC_DEFAULT_OPUS_MODEL="+model,
+		)
+	}
+
+	return envs
 }

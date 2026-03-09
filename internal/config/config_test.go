@@ -230,27 +230,29 @@ func TestLoad_FileNotFound(t *testing.T) {
 	}
 }
 
-func TestLoad_ModelConfig(t *testing.T) {
+func TestLoad_ProviderModelConfig(t *testing.T) {
 	yaml := `
 apps:
-  - id: "light-app"
+  - id: "bailian-app"
     feishu_app_id: "cli_a"
     feishu_app_secret: "s"
     workspace_dir: "/tmp/a"
     claude:
-      model: "haiku"
-  - id: "heavy-app"
+      provider: "bailian"
+      model: "kimi-k2.5"
+  - id: "default-app"
     feishu_app_id: "cli_b"
     feishu_app_secret: "s"
     workspace_dir: "/tmp/b"
-    claude:
-      model: "opus"
-  - id: "default-app"
-    feishu_app_id: "cli_c"
-    feishu_app_secret: "s"
-    workspace_dir: "/tmp/c"
 claude:
-  model: "sonnet"
+  default_provider: "anthropic"
+  providers:
+    anthropic:
+      model: "sonnet"
+    bailian:
+      base_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+      auth_token: "sk-bailian-key"
+      model: "qwen-plus"
 `
 	f := writeTemp(t, yaml)
 	cfg, err := config.Load(f)
@@ -258,23 +260,55 @@ claude:
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.Claude.Model != "sonnet" {
-		t.Errorf("global model = %q, want %q", cfg.Claude.Model, "sonnet")
+	// Global config
+	if cfg.Claude.DefaultProvider != "anthropic" {
+		t.Errorf("default_provider = %q, want %q", cfg.Claude.DefaultProvider, "anthropic")
+	}
+	if len(cfg.Claude.Providers) != 2 {
+		t.Fatalf("providers count = %d, want 2", len(cfg.Claude.Providers))
 	}
 
+	// Anthropic provider
+	ap := cfg.Claude.Providers["anthropic"]
+	if ap.Model != "sonnet" {
+		t.Errorf("anthropic model = %q, want %q", ap.Model, "sonnet")
+	}
+	if ap.BaseURL != "" {
+		t.Errorf("anthropic base_url = %q, want empty", ap.BaseURL)
+	}
+
+	// Bailian provider
+	bp := cfg.Claude.Providers["bailian"]
+	if bp.Model != "qwen-plus" {
+		t.Errorf("bailian model = %q, want %q", bp.Model, "qwen-plus")
+	}
+	if bp.AuthToken != "sk-bailian-key" {
+		t.Errorf("bailian auth_token = %q, want %q", bp.AuthToken, "sk-bailian-key")
+	}
+	if bp.BaseURL != "https://coding.dashscope.aliyuncs.com/apps/anthropic" {
+		t.Errorf("bailian base_url = %q", bp.BaseURL)
+	}
+
+	// App-level overrides
 	appByID := make(map[string]config.AppConfig)
 	for _, a := range cfg.Apps {
 		appByID[a.ID] = a
 	}
 
-	if m := appByID["light-app"].Claude.Model; m != "haiku" {
-		t.Errorf("light-app model = %q, want %q", m, "haiku")
+	ba := appByID["bailian-app"]
+	if ba.Claude.Provider != "bailian" {
+		t.Errorf("bailian-app provider = %q, want %q", ba.Claude.Provider, "bailian")
 	}
-	if m := appByID["heavy-app"].Claude.Model; m != "opus" {
-		t.Errorf("heavy-app model = %q, want %q", m, "opus")
+	if ba.Claude.Model != "kimi-k2.5" {
+		t.Errorf("bailian-app model = %q, want %q", ba.Claude.Model, "kimi-k2.5")
 	}
-	if m := appByID["default-app"].Claude.Model; m != "" {
-		t.Errorf("default-app model = %q, want empty", m)
+
+	da := appByID["default-app"]
+	if da.Claude.Provider != "" {
+		t.Errorf("default-app provider = %q, want empty", da.Claude.Provider)
+	}
+	if da.Claude.Model != "" {
+		t.Errorf("default-app model = %q, want empty", da.Claude.Model)
 	}
 }
 

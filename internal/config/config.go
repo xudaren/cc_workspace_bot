@@ -44,9 +44,13 @@ func (a *AppConfig) AllowedChat(chatID string) bool {
 type AppClaudeConfig struct {
 	PermissionMode string   `mapstructure:"permission_mode"`
 	AllowedTools   []string `mapstructure:"allowed_tools"`
-	// Model overrides the global claude.model for this app.
-	// Accepts aliases (sonnet, opus, haiku) or full model IDs (claude-sonnet-4-6).
-	// Empty means use the global default.
+	// Provider selects which provider from claude.providers to use for this app.
+	// Empty means use claude.default_provider.
+	Provider string `mapstructure:"provider"`
+	// Model overrides the provider's default model for this app.
+	// Accepts aliases (sonnet, opus, haiku), full model IDs (claude-sonnet-4-6),
+	// or third-party model names (qwen-plus, kimi-k2.5).
+	// Empty means use the provider's configured default model.
 	Model string `mapstructure:"model"`
 }
 
@@ -59,9 +63,23 @@ type ServerConfig struct {
 type ClaudeConfig struct {
 	TimeoutMinutes int `mapstructure:"timeout_minutes"`
 	MaxTurns       int `mapstructure:"max_turns"`
-	// Model sets the default model for all apps.
-	// Accepts aliases (sonnet, opus, haiku) or full model IDs (claude-sonnet-4-6).
-	// Can be overridden per-app via apps[].claude.model.
+	// DefaultProvider selects which provider to use when an app doesn't specify one.
+	// Must match a key in Providers. Defaults to "anthropic" if empty.
+	DefaultProvider string `mapstructure:"default_provider"`
+	// Providers defines available model providers, keyed by name.
+	// Example keys: "anthropic", "bailian".
+	Providers map[string]ProviderConfig `mapstructure:"providers"`
+}
+
+// ProviderConfig holds connection details for a single model provider.
+type ProviderConfig struct {
+	// BaseURL is the API endpoint. For "anthropic", leave empty to use claude CLI default.
+	// For "bailian", defaults to https://coding.dashscope.aliyuncs.com/apps/anthropic if empty.
+	BaseURL string `mapstructure:"base_url"`
+	// AuthToken is the API key. For "anthropic", leave empty to use claude CLI's own auth.
+	AuthToken string `mapstructure:"auth_token"`
+	// Model is the default model for this provider.
+	// Accepts aliases (sonnet, opus, haiku), full IDs, or third-party names.
 	Model string `mapstructure:"model"`
 }
 

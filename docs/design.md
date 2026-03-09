@@ -595,6 +595,8 @@ apps:
     allowed_chats: []                  # 空表示不限制
     claude:
       permission_mode: "acceptEdits"   # acceptEdits / bypassPermissions
+      # provider: "bailian"           # 覆盖默认供应商（可选）
+      # model: "kimi-k2.5"            # 覆盖供应商默认模型（可选）
       allowed_tools:                   # 空表示不限制
         - "Bash"
         - "Read"
@@ -619,6 +621,14 @@ server:
 claude:
   timeout_minutes: 5
   max_turns: 20
+  default_provider: "anthropic"       # 默认供应商，对应 providers 中的 key
+  providers:
+    anthropic:                        # 不需要 base_url 和 auth_token
+      model: "sonnet"                 # 默认模型：别名(sonnet/opus/haiku)或完整 ID
+    # bailian:                        # 阿里云百炼平台
+    #   base_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+    #   auth_token: "sk-your-key"
+    #   model: "qwen-plus"
 
 session:
   worker_idle_timeout_minutes: 30    # Worker 空闲超时，触发 session 归档
@@ -682,3 +692,4 @@ flowchart TD
 | feishu.json 路径 | `skills/feishu_ops/feishu.json`（0o600）；Init 时写入 | `workspace/init.go:writeFeishuConfig` |
 | Workspace 初始化模式 | CLAUDE.md 内置引导流程，memory/MEMORY.md 有进度清单 | `workspaces/_template/` |
 | WORKSPACE_DIR 环境变量 | subprocess 注入 `WORKSPACE_DIR=req.WorkspaceDir` | `claude/executor.go:Execute` |
+| 多供应商 env 覆盖 | 三层覆盖：filterEnv 清理进程 env → --settings 覆盖 settings.json → --model 最高优先 | `claude/executor.go:buildSettingsJSON/filterEnv/buildArgs` |

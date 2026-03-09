@@ -695,7 +695,8 @@ apps:
     allowed_chats: []                   # 白名单 chat_id 列表，空表示不限制
     claude:
       permission_mode: "acceptEdits"    # acceptEdits（推荐）或 bypassPermissions
-      model: ""                         # 覆盖全局默认模型（可选）；别名: sonnet/opus/haiku
+      provider: "bailian"              # 覆盖默认供应商（可选），对应 providers 中的 key
+      model: "kimi-k2.5"              # 覆盖该供应商的默认模型（可选）
       allowed_tools:                    # 允许 Claude 使用的工具，空表示不限制
         - "Bash"
         - "Read"
@@ -716,6 +717,7 @@ apps:
       - "oc_abc123"                     # 仅允许特定群聊
     claude:
       permission_mode: "acceptEdits"
+      # 不配 provider/model → 使用 default_provider 的默认模型
       allowed_tools:
         - "Read"
         - "Bash"
@@ -726,8 +728,14 @@ server:
 claude:
   timeout_minutes: 5                    # 单次 claude 执行超时（分钟）
   max_turns: 20                         # claude CLI --max-turns 参数
-  model: ""                             # 全局默认模型；别名: sonnet/opus/haiku，或完整 ID: claude-sonnet-4-6
-                                        # 不填则沿用 claude CLI 内置默认值；可被 apps[].claude.model 覆盖
+  default_provider: "anthropic"         # 默认供应商，必须对应 providers 中的某个 key
+  providers:
+    anthropic:                          # Anthropic 原生（不需要 base_url 和 auth_token）
+      model: "sonnet"                   # 默认模型：别名(sonnet/opus/haiku)或完整ID
+    bailian:                            # 阿里云百炼平台
+      base_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+      auth_token: "sk-your-key"         # 百炼 API Key
+      model: "qwen-plus"               # 百炼默认模型
 
 session:
   worker_idle_timeout_minutes: 30       # Worker 空闲超时，触发 session 归档
@@ -740,11 +748,39 @@ cleanup:
 
 **配置说明**：
 
+- **`default_provider`**：全局默认供应商名，必须对应 `providers` 中的某个 key。不填默认 `"anthropic"`
+- **`providers`**：供应商定义 map。每个 key 是供应商名，值包含 `base_url`、`auth_token`、`model`。Anthropic 不需要 base_url 和 auth_token（使用 claude CLI 自身认证）
+- **`apps[].claude.provider`**：可选，覆盖 `default_provider`，选择该 app 使用的供应商
+- **`apps[].claude.model`**：可选，覆盖所选供应商的默认模型
 - **`permission_mode`**：`acceptEdits` 自动接受文件编辑操作（推荐生产环境）；`bypassPermissions` 跳过所有权限确认（高风险，仅测试用）
 - **`allowed_tools`**：限制 Claude 可用的工具，建议按最小权限原则配置
-- **`model`**：指定 Claude 使用的模型。支持别名（`sonnet`/`opus`/`haiku`）或完整 model ID（`claude-sonnet-4-6`）。全局 `claude.model` 设置所有应用的默认值，`apps[].claude.model` 可按场景覆盖（如对话助手用 `haiku` 省成本，代码分析用 `opus` 提精度）。不填则沿用 claude CLI 内置默认值
 - **`allowed_chats`**：留空则该应用接受所有来源的消息；填写后只处理白名单内的 chat_id
 - **`encrypt_key`**：飞书消息加密配置，企业安全要求高时建议开启
+
+### 支持的模型
+
+#### Anthropic（默认供应商）
+
+| 模型别名 | 完整 Model ID | 说明 |
+|----------|--------------|------|
+| `sonnet` | `claude-sonnet-4-6` | 最佳编码模型（推荐） |
+| `opus` | `claude-opus-4-6` | 最深推理能力 |
+| `haiku` | `claude-haiku-4-5-20251001` | 轻量快速，成本最低 |
+
+#### 百炼（阿里云 DashScope）
+
+通过百炼平台可使用以下第三方模型，在 `providers.bailian.model` 或 `apps[].claude.model` 中填写对应模型名：
+
+| 品牌 | 模型 | 能力 |
+|------|------|------|
+| 千问 | `qwen3.5-plus` | 文本生成、深度思考、视觉理解 |
+| 千问 | `qwen3-max-2026-01-23` | 文本生成、深度思考 |
+| 千问 | `qwen3-coder-next` | 文本生成 |
+| 千问 | `qwen3-coder-plus` | 文本生成 |
+| 智谱 | `glm-5` | 文本生成、深度思考 |
+| 智谱 | `glm-4.7` | 文本生成、深度思考 |
+| Kimi | `kimi-k2.5` | 文本生成、深度思考、视觉理解 |
+| MiniMax | `MiniMax-M2.5` | 文本生成、深度思考 |
 
 ---
 

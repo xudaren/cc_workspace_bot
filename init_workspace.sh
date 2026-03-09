@@ -179,7 +179,8 @@ NEW_APP_BLOCK="  - id: \"${APP_ID}\"
     allowed_chats: []
     claude:
       permission_mode: \"acceptEdits\"
-      # model: \"sonnet\"   # 覆盖全局默认模型（可选）；别名: sonnet/opus/haiku
+      # provider: \"bailian\"   # 覆盖默认供应商（可选）；对应 providers 中的 key
+      # model: \"sonnet\"       # 覆盖供应商默认模型（可选）；别名: sonnet/opus/haiku
       allowed_tools:
         - \"Bash\"
         - \"Read\"

@@ -13,7 +13,8 @@ apps:
         - "Read"
         - "Edit"
         - "Write"
-      # model: "sonnet"   # 覆盖全局默认模型（可选）
+      # provider: "bailian"        # 覆盖默认供应商（可选）
+      # model: "kimi-k2.5"         # 覆盖该供应商的默认模型（可选）
 
   # - id: "code-review"
   #   feishu_app_id: "cli_yyy"
@@ -25,7 +26,8 @@ apps:
   #     - "oc_abc123"
   #   claude:
   #     permission_mode: "acceptEdits"
-  #     model: "opus"     # 该 workspace 使用 opus（重任务用更强模型）
+  #     provider: "anthropic"
+  #     model: "opus"
   #     allowed_tools:
   #       - "Read"
   #       - "Bash"
@@ -36,8 +38,14 @@ server:
 claude:
   timeout_minutes: 5
   max_turns: 20
-  # model: "sonnet"   # 全局默认模型；别名: sonnet/opus/haiku，或完整 ID: claude-sonnet-4-6
-  #                   # 不填则沿用 claude CLI 内置默认值
+  default_provider: "anthropic"       # 默认供应商，必须对应 providers 中的某个 key
+  providers:
+    anthropic:                        # Anthropic 原生服务（不需要 base_url 和 auth_token）
+      model: "sonnet"                 # 默认模型：别名(sonnet/opus/haiku)或完整ID(claude-sonnet-4-6)
+    # bailian:                        # 阿里云百炼平台
+    #   base_url: "https://coding.dashscope.aliyuncs.com/apps/anthropic"
+    #   auth_token: "sk-your-dashscope-api-key"
+    #   model: "qwen-plus"            # 百炼默认模型
 
 session:
   worker_idle_timeout_minutes: 30
