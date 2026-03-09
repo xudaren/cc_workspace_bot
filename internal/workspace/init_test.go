@@ -10,7 +10,7 @@ func TestInit_CreatesRequiredDirs(t *testing.T) {
 	dir := t.TempDir()
 	workspaceDir := filepath.Join(dir, "workspace")
 
-	if err := Init(workspaceDir, ""); err != nil {
+	if err := Init(workspaceDir, "", "", ""); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
 
@@ -26,7 +26,7 @@ func TestInit_CreatesMemoryLock(t *testing.T) {
 	dir := t.TempDir()
 	workspaceDir := filepath.Join(dir, "workspace")
 
-	if err := Init(workspaceDir, ""); err != nil {
+	if err := Init(workspaceDir, "", "", ""); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
 
@@ -40,7 +40,7 @@ func TestInit_DoesNotOverwriteExistingLock(t *testing.T) {
 	dir := t.TempDir()
 	workspaceDir := filepath.Join(dir, "workspace")
 
-	if err := Init(workspaceDir, ""); err != nil {
+	if err := Init(workspaceDir, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -50,7 +50,7 @@ func TestInit_DoesNotOverwriteExistingLock(t *testing.T) {
 	}
 
 	// Second Init should not erase the existing lock content.
-	if err := Init(workspaceDir, ""); err != nil {
+	if err := Init(workspaceDir, "", "", ""); err != nil {
 		t.Fatalf("second Init() error = %v", err)
 	}
 
@@ -68,7 +68,7 @@ func TestInit_Idempotent(t *testing.T) {
 	workspaceDir := filepath.Join(dir, "workspace")
 
 	for range 3 {
-		if err := Init(workspaceDir, ""); err != nil {
+		if err := Init(workspaceDir, "", "", ""); err != nil {
 			t.Fatalf("Init() error = %v", err)
 		}
 	}
@@ -90,7 +90,7 @@ func TestInit_CopiesTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Init(workspaceDir, templateDir); err != nil {
+	if err := Init(workspaceDir, templateDir, "", ""); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestInit_TemplateDoesNotOverwriteExisting(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Init(workspaceDir, templateDir); err != nil {
+	if err := Init(workspaceDir, templateDir, "", ""); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
 
@@ -151,7 +151,7 @@ func TestCopyTemplate_SkipsSymlinks(t *testing.T) {
 		t.Skip("symlinks not supported on this platform")
 	}
 
-	if err := Init(workspaceDir, templateDir); err != nil {
+	if err := Init(workspaceDir, templateDir, "", ""); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
 

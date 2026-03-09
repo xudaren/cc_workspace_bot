@@ -1,1 +1,37 @@
+# ── Secrets & Config ──────────────────────────────────────────────────────────
+config.yaml
+**/feishu_ops/feishu.json
+
+# ── Compiled Binaries ─────────────────────────────────────────────────────────
+/server
+
+# ── Runtime State ─────────────────────────────────────────────────────────────
+bot.db
 nohup.out
+server.pid
+*.log
+*.log.wf
+
+# ── Local Claude Settings (tool permissions, not for sharing) ─────────────────
+**/.claude/settings.local.json
+
+# ── Python Bytecode (feishu_ops/scripts) ──────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Workspace Runtime Data ────────────────────────────────────────────────────
+# Session directories contain user conversation data
+workspaces/*/sessions/
+# Memory files contain personal/sensitive user data
+workspaces/*/memory/
+# Task YAML files are runtime state managed by the bot
+workspaces/*/tasks/
+# Temp attachment downloads
+workspaces/*/tmp/
+# flock lock file
+workspaces/*/.memory.lock
+
+# ── Template exceptions (these are source files, not runtime data) ─────────────
+!workspaces/_template/memory/
+!workspaces/_template/.claude/

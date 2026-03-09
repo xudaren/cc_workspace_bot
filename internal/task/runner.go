@@ -81,6 +81,8 @@ func (r *Runner) Run(ctx context.Context, task *model.Task) {
 		ClaudeSessionID: sess.ClaudeSessionID,
 		AppConfig:       appCfg,
 		WorkspaceDir:    appCfg.WorkspaceDir,
+		ChannelKey:      channelKey,
+		SenderID:        task.CreatedBy,
 	})
 	if err != nil {
 		slog.Error("task runner: execute", "err", err, "task_id", task.ID)

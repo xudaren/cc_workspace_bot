@@ -9,13 +9,13 @@ import (
 )
 
 // validApp returns a minimal valid AppConfig.
+// feishu_verification_token and feishu_encrypt_key are optional (WS mode).
 func validApp() config.AppConfig {
 	return config.AppConfig{
-		ID:                      "app1",
-		FeishuAppID:             "cli_xxx",
-		FeishuAppSecret:         "secret",
-		FeishuVerificationToken: "token",
-		WorkspaceDir:            "./workspaces/app1",
+		ID:              "app1",
+		FeishuAppID:     "cli_xxx",
+		FeishuAppSecret: "secret",
+		WorkspaceDir:    "./workspaces/app1",
 	}
 }
 
@@ -48,40 +48,37 @@ func TestValidate(t *testing.T) {
 		{
 			name: "missing feishu_app_id",
 			cfg: config.Config{Apps: []config.AppConfig{{
-				ID:                      "a",
-				FeishuAppSecret:         "y",
-				FeishuVerificationToken: "z",
-				WorkspaceDir:            "/tmp",
-			}}},
-			wantErr: true,
-		},
-		{
-			name: "missing feishu_app_secret",
-			cfg: config.Config{Apps: []config.AppConfig{{
-				ID:                      "a",
-				FeishuAppID:             "x",
-				FeishuVerificationToken: "z",
-				WorkspaceDir:            "/tmp",
-			}}},
-			wantErr: true,
-		},
-		{
-			name: "missing verification_token",
-			cfg: config.Config{Apps: []config.AppConfig{{
 				ID:              "a",
-				FeishuAppID:     "x",
 				FeishuAppSecret: "y",
 				WorkspaceDir:    "/tmp",
 			}}},
 			wantErr: true,
 		},
 		{
+			name: "missing feishu_app_secret",
+			cfg: config.Config{Apps: []config.AppConfig{{
+				ID:           "a",
+				FeishuAppID:  "x",
+				WorkspaceDir: "/tmp",
+			}}},
+			wantErr: true,
+		},
+		{
+			name: "verification_token is optional",
+			cfg: config.Config{Apps: []config.AppConfig{{
+				ID:              "a",
+				FeishuAppID:     "x",
+				FeishuAppSecret: "y",
+				WorkspaceDir:    "/tmp",
+			}}},
+			wantErr: false,
+		},
+		{
 			name: "missing workspace_dir",
 			cfg: config.Config{Apps: []config.AppConfig{{
-				ID:                      "a",
-				FeishuAppID:             "x",
-				FeishuAppSecret:         "y",
-				FeishuVerificationToken: "z",
+				ID:              "a",
+				FeishuAppID:     "x",
+				FeishuAppSecret: "y",
 			}}},
 			wantErr: true,
 		},

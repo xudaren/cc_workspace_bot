@@ -55,7 +55,7 @@ func main() {
 	// ── Workspace init ────────────────────────────────────────────
 	templateDir := filepath.Join("workspaces", "_template")
 	for _, appCfg := range cfg.Apps {
-		if err := workspace.Init(appCfg.WorkspaceDir, templateDir); err != nil {
+		if err := workspace.Init(appCfg.WorkspaceDir, templateDir, appCfg.FeishuAppID, appCfg.FeishuAppSecret); err != nil {
 			slog.Error("init workspace", "app", appCfg.ID, "err", err)
 			os.Exit(1)
 		}

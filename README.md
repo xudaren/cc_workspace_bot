@@ -109,6 +109,8 @@ session:
 
 ### 运行
 
+**直接运行（前台）：**
+
 ```bash
 # 使用默认配置
 ./server
@@ -116,6 +118,31 @@ session:
 # 指定配置文件
 ./server -config /path/to/config.yaml
 ```
+
+**后台守护进程（推荐生产环境）：**
+
+```bash
+# 先构建二进制
+go build -o server ./cmd/server
+
+# 启动（nohup 后台运行，日志写入 server.log）
+./start.sh start
+
+# 查看运行状态
+./start.sh status
+
+# 停止（等待当前任务完成，最多 10s 后强制退出）
+./start.sh stop
+
+# 重启
+./start.sh restart
+```
+
+| 文件 | 说明 |
+|------|------|
+| `server.pid` | 进程 PID 文件 |
+| `server.log` | 标准输出日志 |
+| `server.log.wf` | 标准错误日志 |
 
 ## 使用方法
 

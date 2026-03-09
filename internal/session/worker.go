@@ -107,11 +107,11 @@ func (w *Worker) process(ctx context.Context, msg *feishu.IncomingMessage) {
 		return
 	}
 
-	prompt := w.moveAttachments(msg.Prompt, sess.ID)
-	w.recordMessage(sess.ID, msg.SenderID, "user", prompt, msg.MessageID)
+	msg.Prompt = w.moveAttachments(msg.Prompt, sess.ID)
+	w.recordMessage(sess.ID, msg.SenderID, "user", msg.Prompt, msg.MessageID)
 
 	cardMsgID := w.sendThinkingCard(ctx, msg)
-	result, err := w.runClaude(ctx, sess, prompt)
+	result, err := w.runClaude(ctx, sess, msg)
 	if err != nil {
 		w.replyError(ctx, msg, cardMsgID, err)
 		return
@@ -122,13 +122,15 @@ func (w *Worker) process(ctx context.Context, msg *feishu.IncomingMessage) {
 }
 
 // runClaude invokes the Claude executor and returns the result.
-func (w *Worker) runClaude(ctx context.Context, sess *model.Session, prompt string) (*claude.ExecuteResult, error) {
+func (w *Worker) runClaude(ctx context.Context, sess *model.Session, msg *feishu.IncomingMessage) (*claude.ExecuteResult, error) {
 	return w.executor.Execute(ctx, &claude.ExecuteRequest{
-		Prompt:          prompt,
+		Prompt:          msg.Prompt,
 		SessionID:       sess.ID,
 		ClaudeSessionID: sess.ClaudeSessionID,
 		AppConfig:       w.appCfg,
 		WorkspaceDir:    w.appCfg.WorkspaceDir,
+		ChannelKey:      w.channelKey,
+		SenderID:        msg.SenderID,
 	})
 }
 

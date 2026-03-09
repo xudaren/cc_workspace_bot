@@ -1,7 +1,7 @@
 # 系统设计文档
 
 > 状态: 已实现
-> 最后更新: 2026-03-05
+> 最后更新: 2026-03-09
 
 ## 实现状态速查
 
@@ -18,11 +18,11 @@
 | Task Watcher（fsnotify）| `internal/task/watcher.go` | ✅ |
 | Task Scheduler（gocron）| `internal/task/scheduler.go` | ✅ |
 | Task Runner | `internal/task/runner.go` | ✅ |
+| 附件定期清理 | `internal/task/cleanup.go` | ✅ |
 | Workspace 初始化 | `internal/workspace/init.go` | ✅ |
 | Workspace 模板 | `workspaces/_template/` | ✅ |
 | 主入口 | `cmd/server/main.go` | ✅ |
-| 附件定期清理 | — | ⏳ 待实现 |
-| 测试覆盖 | — | ⏳ 待补充 |
+| 测试覆盖 | config / claude / workspace / task / session | ✅ 部分覆盖 |
 
 ---
 
@@ -59,6 +59,7 @@ graph TB
         Sender[飞书 Sender]
         Scheduler[任务调度器 gocron]
         Watcher[tasks/ 文件 Watcher]
+        Cleaner[附件清理 Cleaner]
         DB[(SQLite)]
     end
 
@@ -71,7 +72,7 @@ graph TB
     WS1 & WS2 & WS3 --> Router
     Router -->|按 channel_key 入队| W1 & W2 & W3
     W1 & W2 & W3 --> Exec
-    Exec -->|"--cwd sessions/<session-id>/"| AppDir
+    Exec -->|"cmd.Dir = sessions/<session-id>/"| AppDir
     Exec -->|执行结果| Sender
     Sender -->|发消息/PATCH 卡片| FS
     Workers <-->|读写 session/message| DB
@@ -79,6 +80,8 @@ graph TB
     Watcher -->|同步任务到| DB
     Watcher -->|注册/注销 Job| Scheduler
     Scheduler -->|定时触发| Exec
+    Scheduler -->|定时触发| Cleaner
+    Cleaner -->|删除 attachments/| AppDir
 ```
 
 ---
@@ -109,11 +112,23 @@ graph LR
 
 ### Channel Key 生成规则
 
+> **注意**：P2P channel_key 使用飞书的 `chat_id`（会话 ID），不是用户的 `open_id`。
+
 | 飞书渠道 | ChatType | channel_key 格式 | 支持 /new |
 |---|---|---|---|
-| 单聊（P2P）| `p2p` | `p2p:{open_id}:{app_id}` | ✅ |
+| 单聊（P2P）| `p2p` | `p2p:{chat_id}:{app_id}` | ✅ |
 | 普通群聊 | `group` | `group:{chat_id}:{app_id}` | ✅ |
-| 话题群 | `topic_group` | `thread:{chat_id}:{thread_id}:{app_id}` | ❌ |
+| 话题群 | `topic_group` / `topic` | `thread:{chat_id}:{thread_id}:{app_id}` | ❌ |
+
+### channel_key → routing_key 转换
+
+feishu_ops Python 脚本使用的 `routing_key` 格式与内部 `channel_key` 不同，executor 在调用前通过 `channelKeyToRoutingKey()` 转换：
+
+| 内部 channel_key | feishu_ops routing_key | 说明 |
+|---|---|---|
+| `p2p:{chat_id}:{app_id}` | `p2p:{chat_id}` | 去掉 app_id |
+| `group:{chat_id}:{app_id}` | `group:{chat_id}` | 去掉 app_id |
+| `thread:{chat_id}:{thread_id}:{app_id}` | `group:{chat_id}` | 话题群以主群 chat_id 发送 |
 
 ### Worker 生命周期
 
@@ -190,20 +205,25 @@ erDiagram
 
 ### 5.1 文件/图片预处理
 
-飞书消息中的文件和图片在传给 claude 前需先下载到本地：
+飞书消息中的文件和图片在传给 claude 前需先下载到本地。下载分两步：
+1. **receiver**：调用飞书 API，保存到系统临时目录（`os.TempDir()`）
+2. **worker**：`moveAttachments()` 将临时文件移入 `sessions/<session-id>/attachments/`，并替换 prompt 中的路径
 
 ```mermaid
 flowchart TD
     A[收到飞书消息] --> B{含附件?}
     B -->|否| E[直接构造 prompt]
-    B -->|是| Q[查询当前活跃 session_id]
-    Q --> C[调用飞书 API 下载附件]
-    C --> D["保存到 /workspaces/<app>/sessions/<session-id>/attachments/<ts>_<filename>"]
-    D --> E[将飞书资源引用替换为本地绝对路径]
+    B -->|是| C[调用飞书 API 下载附件]
+    C --> D["保存到 os.TempDir()\nfeishu_img_{key}_{ts}.jpg\n{ts}_{sanitized_filename}"]
+    D --> E["prompt 中写入 [图片: /tmp/...] 或 [文件: /tmp/...]"]
     E --> F[投入 session worker 队列]
+    F --> G["worker.moveAttachments()\n移入 sessions/<id>/attachments/<ns>_<name>\n更新 prompt 中的路径"]
+    G --> H[调用 claude executor]
 ```
 
-内容替换：飞书的 file_token 引用 → 替换为本地绝对路径，claude 通过 Read 工具可直接访问。
+附件 prompt 格式：
+- 图片：`[图片: /absolute/path/to/file.jpg]`
+- 文件：`[文件: /absolute/path/to/file.pdf]`
 
 ---
 
@@ -259,18 +279,20 @@ sequenceDiagram
     User->>FS: 发送消息（可含图片/文件）
     FS->>WS: WS 推送 P2MessageReceiveV1
     WS->>Router: 解析事件，构造 channel_key
-    Router->>DB: 查询活跃 session_id（用于确定附件存储路径）
-    Router->>FS: 下载附件（如有），保存到 session attachments/，替换路径
-    Router->>Worker: 入队（channel_key，携带替换后 prompt）
+    Router->>FS: 下载附件（如有），保存到 os.TempDir()，写入 prompt 临时路径
+    Router->>Worker: 入队（channel_key，携带含临时路径的 prompt）
 
+    Worker->>Worker: moveAttachments() 将临时文件移入 sessions/<id>/attachments/
     Worker->>FS: 发送"思考中..."卡片
-    Worker->>Exec: 执行（prompt, session_id, claude_session_id）
-    Exec->>Exec: 创建 sessions/<session-id>/ 目录（如不存在）\n写入 SESSION_CONTEXT.md
-    Exec->>Claude: 子进程\n-p prompt\n--cwd /workspaces/<app>/sessions/<session-id>/\n--resume claude_session_id（如有）\n--permission-mode acceptEdits\n--allowedTools ...
+    Worker->>Exec: 执行（prompt, session_id, claude_session_id, channel_key, sender_id）
+
+    Exec->>Exec: 创建 sessions/<session-id>/attachments/ 目录\n写入 SESSION_CONTEXT.md\ninjectRoutingContext() 将 routing_key+sender_id prepend 到 prompt
+
+    Exec->>Claude: 子进程\n-p "<system_routing>...\n用户 prompt"\n--output-format stream-json\n--verbose\n--permission-mode acceptEdits\n--allowedTools ...\n--max-turns N\n--resume claude_session_id（如有）\n[cmd.Dir = session目录; WORKSPACE_DIR=... env]
 
     Claude-->>Exec: stream-json 输出（执行完成）
     Exec->>Exec: 从 system 事件提取 claude_session_id（首次时）
-    Exec-->>Worker: 最终结果文本
+    Exec-->>Worker: ExecuteResult{Text, ClaudeSessionID, CostUSD, DurationMS}
 
     Worker->>DB: 写入 messages 记录（含 sender_id）& 更新 claude_session_id
     Worker->>FS: PATCH 卡片为最终结果
@@ -296,8 +318,8 @@ sequenceDiagram
 
     Worker->>DB: 将当前 session status 置为 archived
     Worker->>DB: 生成新 session_id，claude_session_id 置空
-    Worker->>Disk: 创建 sessions/<new-session-id>/ 目录
-    Worker->>FS: 回复"已开启新会话"
+    Worker->>Disk: 创建 sessions/<new-session-id>/attachments/ 目录
+    Worker->>FS: 回复"✅ 已开启新会话"
     Note over Worker: 下一条消息使用新 session_id 和新 session 目录\n不带 --resume，claude 创建全新 context
 ```
 
@@ -340,9 +362,9 @@ enabled: true
 ```
 
 - YAML 文件由 claude 按 task skill 规范写入，为 **source of truth**
-- 删除文件 → 注销任务（watcher 监听 DELETE 事件）
+- 删除文件 → 注销任务（watcher 监听 DELETE/RENAME 事件）
 - 修改文件 → 更新任务（watcher 监听 WRITE 事件）
-- 框架启动时全量扫描 `tasks/` 目录，恢复所有 enabled 任务
+- 框架**启动时从 DB** 查询 `enabled=true` 的任务并恢复注册（watcher 负责 YAML→DB 同步，restoreEnabledTasks 从 DB 读取）
 
 ---
 
@@ -361,7 +383,7 @@ sequenceDiagram
     Scheduler->>Runner: 执行任务（含 app_id、target、prompt）
     Runner->>DB: 查询或创建 target 的 channel & 活跃 session
     Runner->>Exec: 执行 claude（prompt, session_id, claude_session_id）
-    Exec->>Claude: 子进程（--cwd session 目录，--resume 或新建）
+    Exec->>Claude: 子进程（cmd.Dir = session 目录，--resume 或新建）
     Claude-->>Exec: 输出结果
     Exec-->>Runner: 完整结果
     Runner->>Sender: 主动推送消息到 target_id
@@ -385,8 +407,8 @@ graph TD
         TASKS_DIR["tasks/（claude 写，watcher 读）"]
 
         subgraph "sessions/"
-            S1["session-abc/\n← --cwd\n写操作天然隔离"]
-            S2["session-xyz/\n← --cwd\n写操作天然隔离"]
+            S1["session-abc/\n← cmd.Dir\n写操作天然隔离"]
+            S2["session-xyz/\n← cmd.Dir\n写操作天然隔离"]
         end
     end
 
@@ -403,7 +425,7 @@ graph TD
 | `tasks/` | claude 写，watcher 读 | 每任务独立文件名，无冲突 |
 | `sessions/<id>/` | 单 session 独占写 | 目录级隔离，无需锁 |
 
-### 绝对路径注入
+### 绝对路径注入（SESSION_CONTEXT.md）
 
 框架在启动每个 claude 进程前，写入 `SESSION_CONTEXT.md` 到 session 目录，提供所有绝对路径：
 
@@ -421,6 +443,21 @@ graph TD
 
 skill 中所有路径均来自此文件，不使用任何相对路径。
 
+### routing_key / sender_id 注入（prompt 前置）
+
+`routing_key` 和 `sender_id` **不经过 SESSION_CONTEXT.md**，而是由 executor 在执行前直接 prepend 到 prompt：
+
+```
+<system_routing>
+routing_key: p2p:oc_xxxx
+sender_id: ou_yyyy
+</system_routing>
+
+用户实际 prompt 内容...
+```
+
+这样做的原因：SESSION_CONTEXT.md 由 executor 写入，若多个 goroutine 并发写同一文件会产生竞态；routing_key/sender_id 注入到 prompt 里则无此问题。
+
 ---
 
 ## 七、Workspace 目录结构
@@ -430,17 +467,28 @@ workspaces/<app-id>/
 ├── CLAUDE.md                  # app 级共享配置（claude 向上读取）
 ├── .memory.lock               # flock 锁文件（框架自动创建）
 ├── skills/
-│   ├── feishu.md              # 飞书操作 skill
+│   ├── feishu_ops/            # 飞书操作（初始化时由 workspace.Init 写入）
+│   │   ├── SKILL.md           # 飞书 API 操作手册
+│   │   ├── feishu.json        # 凭证（0o600，框架写入）
+│   │   └── scripts/           # Python 脚本（18 个）
 │   ├── memory.md              # 长记忆 skill（含 flock 写入指南）
-│   └── task.md                # 定时任务 skill（tasks/*.yaml 格式规范）
+│   ├── task.md                # 定时任务 skill（tasks/*.yaml 格式规范）
+│   └── cases.md               # 事件记录 skill（cases/ 目录管理规范）
 ├── memory/                    # 长记忆（共享，flock 保护）
+│   ├── MEMORY.md              # 主索引 + 初始化进度（模板初始化）
+│   └── user_profile.md        # 用户档案（模板初始化）
+├── cases/                     # 事件案例库（claude 按需创建）
+│   ├── index.md
+│   └── YYYY-MM-DD-{slug}.md
 ├── tasks/                     # 定时任务配置（claude 写，watcher 监听）
 │   └── <uuid>.yaml
 └── sessions/
-    └── <session-id>/          # --cwd 指向这里
+    └── <session-id>/          # cmd.Dir 指向这里
         ├── SESSION_CONTEXT.md # 框架注入的绝对路径上下文
-        └── attachments/       # 附件（临时，定期清理）
+        └── attachments/       # 附件（定期清理）
 ```
+
+**feishu.json 路径**：`skills/feishu_ops/feishu.json`（0o600 权限）。凭证由 `workspace.Init()` 写入，不暴露给 LLM，由 feishu_ops Python 脚本直接读取。
 
 ---
 
@@ -449,36 +497,49 @@ workspaces/<app-id>/
 ```
 cc-workspace-bot/
 ├── cmd/
-│   └── server/main.go          # 入口：配置加载、组件连线、WS 客户端启动
+│   └── server/main.go          # 入口：配置加载、组件连线、WS 客户端启动、优雅关闭
 ├── internal/
 │   ├── config/
-│   │   └── config.go           # Viper YAML 配置结构 + Validate()
+│   │   ├── config.go           # Viper YAML 配置结构 + Validate()
+│   │   └── config_test.go
 │   ├── model/
 │   │   └── models.go           # GORM 数据模型（Channel / Session / Message / Task / TaskYAML）
 │   ├── db/
 │   │   └── db.go               # SQLite WAL 连接 + AutoMigrate
 │   ├── feishu/
-│   │   ├── receiver.go         # WS 事件解析、附件下载、Dispatcher 接口
+│   │   ├── receiver.go         # WS 事件解析、附件下载到 TempDir、Dispatcher 接口
 │   │   └── sender.go           # SendThinking / UpdateCard / SendText
 │   ├── session/
 │   │   ├── manager.go          # channel_key → Worker 懒启动（sync.Map + WaitGroup）
-│   │   └── worker.go           # 串行队列、/new、空闲超时、附件移动
+│   │   └── worker.go           # 串行队列、/new、空闲超时、moveAttachments
 │   ├── claude/
-│   │   └── executor.go         # 子进程调用、SESSION_CONTEXT.md 注入、stream-json 解析
+│   │   ├── executor.go         # 子进程调用、SESSION_CONTEXT.md 注入、routing 注入、stream-json 解析
+│   │   └── executor_test.go    # channelKeyToRoutingKey / injectRoutingContext 单测
 │   ├── workspace/
-│   │   └── init.go             # 目录初始化 + 模板复制（跳过 symlink）
+│   │   ├── init.go             # 目录初始化 + feishu.json 写入 + 模板复制（跳过 symlink）
+│   │   └── init_test.go
 │   └── task/
 │       ├── watcher.go          # fsnotify 监听 tasks/ 目录变更
 │       ├── scheduler.go        # gocron/v2 调度器管理
-│       └── runner.go           # 任务执行（YAML 加载 + cron 校验 + claude 调用）
+│       ├── scheduler_test.go
+│       ├── runner.go           # 任务执行（YAML 加载 + cron 校验 + claude 调用）
+│       ├── runner_test.go
+│       ├── cleanup.go          # 附件清理（archived 超 retention_days 或超 max_days 强制）
+│       └── cleanup_test.go
 ├── workspaces/
 │   └── _template/              # 新 workspace 默认模板
-│       ├── CLAUDE.md
+│       ├── CLAUDE.md           # 含初始化模式、工作模式占位符、技能索引
+│       ├── .claude/
+│       │   └── settings.local.json  # 最小权限白名单（flock / feishu_ops 脚本 / 基础命令）
+│       ├── memory/
+│       │   ├── MEMORY.md       # 主索引 + 初始化进度清单
+│       │   └── user_profile.md # 用户档案模板
 │       └── skills/
-│           ├── feishu.md
 │           ├── memory.md       # 含 flock 写入指南和绝对路径用法
-│           └── task.md         # tasks/*.yaml 格式规范
-├── config.yaml                 # 应用配置示例
+│           ├── task.md         # tasks/*.yaml 格式规范
+│           ├── cases.md        # 事件记录规范（cases/ 目录）
+│           └── feishu_ops/     # 飞书集成（scripts/ + SKILL.md）
+├── config.yaml.template        # 配置示例
 ├── go.mod / go.sum
 └── bot.db                      # SQLite 数据库（运行时生成）
 ```
@@ -503,7 +564,6 @@ apps:
         - "Read"
         - "Edit"
         - "Write"
-        - "mcp__feishu"
 
   - id: "code-review"
     feishu_app_id: "cli_yyy"
@@ -516,7 +576,6 @@ apps:
       allowed_tools:
         - "Read"
         - "Bash"
-        - "mcp__gitlab"
 
 server:
   port: 8080
@@ -540,20 +599,17 @@ cleanup:
 
 ```mermaid
 flowchart TD
-    A["Session 归档事件\n（/new 命令 或 Worker 空闲超时）"]
-    A --> B[记录归档时间到 sessions.updated_at]
-
-    C["每日定时任务（凌晨 2:00）"]
-    C --> D{扫描所有 session 附件目录}
-    D --> E{"已归档 且 超过\nretention_days（默认 7 天）?"}
-    E -->|是| F["删除 sessions/<id>/attachments/ 目录"]
+    A["定时任务（凌晨 2:00，由 gocron 调度）"]
+    A --> D{扫描所有 session（Join channels 过滤 app）}
+    D --> E{"已归档 且 updated_at 超过\nretention_days（默认 7 天）?"}
+    E -->|是| F["os.RemoveAll(sessions/<id>/attachments/)"]
     E -->|否| G[跳过]
     D --> H{"created_at 超过\nmax_days（默认 30 天）?"}
     H -->|是| F
     H -->|否| G
 ```
 
-清理范围：仅删除 `attachments/` 目录；`SESSION_CONTEXT.md` 随 session 目录一同清理；SQLite 中的 session / message 记录永久保留。
+清理范围：仅删除 `attachments/` 子目录；`SESSION_CONTEXT.md` 及 session 目录本身保留；SQLite 中的 session / message 记录永久保留。
 
 ---
 
@@ -561,21 +617,31 @@ flowchart TD
 
 | 决策点 | 结论 | 实现位置 |
 |---|---|---|
-| CLAUDE.md 向上查找 | 利用，不隔断；父目录可放全局配置 | `--cwd sessions/<id>/`，自然继承 workspace |
-| 并发隔离 | `--cwd` 指向 session 目录；memory/ 用 flock 加锁 | `claude/executor.go`，skill 层 flock |
+| CLAUDE.md 向上查找 | 利用，不隔断；父目录可放全局配置 | `cmd.Dir = sessions/<id>/`，自然继承 workspace |
+| 并发隔离 | `cmd.Dir` 指向 session 目录；memory/ 用 flock 加锁 | `claude/executor.go`，skill 层 flock |
 | 绝对路径 | 框架注入 SESSION_CONTEXT.md，skill 全用绝对路径 | `executor.go:writeSessionContext` |
+| routing_key 注入 | prepend 到 prompt（避免 SESSION_CONTEXT.md 并发写竞态） | `executor.go:injectRoutingContext` |
+| channel_key 格式 | P2P 用 chat_id 不是 open_id；thread 映射到 group | `feishu/receiver.go:buildChannelKey` |
+| routing_key 转换 | 内部 channel_key → feishu_ops routing_key（去 app_id 后缀） | `claude/executor.go:channelKeyToRoutingKey` |
 | Context 管理 | `--resume` 复用 claude session；`/new` 时不传 --resume | `session/worker.go:getOrCreateSession` |
 | 群聊触发 | 所有消息触发，claude 自行判断是否回复 | `receiver.go`（无过滤），workspace CLAUDE.md 定义策略 |
-| 文件/图片 | 下载到 tmp → 移入 session/attachments/，替换为绝对路径 | `receiver.go:parseContent` + `worker.go:moveAttachments` |
+| 附件处理 | 下载到 os.TempDir() → worker moveAttachments 移入 session/attachments/ | `receiver.go:downloadImageResource/downloadFile` + `worker.go:moveAttachments` |
+| 附件 prompt 格式 | `[图片: /abs/path]` 和 `[文件: /abs/path]` | `receiver.go:parseContent` + `worker.go:replacePaths` |
 | 结果展示 | 仅展示最终结果，一次性 PATCH 卡片 | `sender.go:UpdateCard` |
 | 任务创建 | claude 通过 task skill 直接写 tasks/*.yaml，框架 watch 注册 | `task/watcher.go` + `task/scheduler.go` |
+| 任务恢复 | 启动时从 DB 查 enabled 任务（watcher 保证 YAML→DB 同步） | `cmd/server/main.go:restoreEnabledTasks` |
 | 并发写锁 | memory/ 用 flock；task 文件独立文件名无冲突 | skill 层实现，框架不干预 |
-| 附件清理 | 两级清理：归档后 7 天 + 最大 30 天强制清理 | ⏳ 待实现（cleanup cron）|
-| Worker 超时 | 空闲 30 分钟自动退出，触发 session 归档 | `session/manager.go`（idleTimeout）|
+| 附件清理 | 两级清理：归档后 7 天 + 最大 30 天强制；gocron 定时执行 | `task/cleanup.go:Cleaner` |
+| Worker 超时 | 空闲 30 分钟自动退出，触发 session 归档 | `session/worker.go:run` idleTimeout |
 | 数据持久化 | SQLite WAL；task YAML 文件为 source of truth，DB 为运行时镜像 | `db/db.go`，`glebarez/sqlite` |
 | 初始化循环依赖 | `dispatchForwarder` + `atomic.Pointer` | `cmd/server/main.go` |
-| 优雅关闭 | `sessionMgr.Wait()` 等待所有 worker | `session/manager.go:Wait()` |
-| HTTP 安全 | 设置 Read/Write/Idle Timeout | `cmd/server/main.go:httpServer` |
+| 优雅关闭 | `sessionMgr.Wait()` 等待所有 worker；HTTP Shutdown(10s) | `session/manager.go:Wait()` |
+| HTTP 安全 | ReadHeaderTimeout=5s / ReadTimeout=10s / WriteTimeout=10s / IdleTimeout=60s | `cmd/server/main.go:httpServer` |
+| HTTP 健康检查 | `GET /health` → 200 OK | `cmd/server/main.go` |
 | 附件大小限制 | 100 MiB per file（`io.LimitReader`）| `feishu/receiver.go:saveBody` |
+| stdout 缓冲 | 1 MiB per-line buffer（避免大输出截断）| `claude/executor.go:scannerMaxBytes` |
+| 进程组管理 | `Setpgid: true` + `WaitDelay=30s`（保证子进程树完整退出）| `claude/executor.go:Execute` |
 | Cron 校验 | `LoadYAML` 时用 `robfig/cron/v3` 校验表达式 | `task/runner.go:LoadYAML` |
-
+| feishu.json 路径 | `skills/feishu_ops/feishu.json`（0o600）；Init 时写入 | `workspace/init.go:writeFeishuConfig` |
+| Workspace 初始化模式 | CLAUDE.md 内置引导流程，memory/MEMORY.md 有进度清单 | `workspaces/_template/` |
+| WORKSPACE_DIR 环境变量 | subprocess 注入 `WORKSPACE_DIR=req.WorkspaceDir` | `claude/executor.go:Execute` |

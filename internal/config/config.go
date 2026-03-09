@@ -85,9 +85,6 @@ func (c *Config) Validate() error {
 		if app.FeishuAppSecret == "" {
 			return fmt.Errorf("config: app %q is missing 'feishu_app_secret'", app.ID)
 		}
-		if app.FeishuVerificationToken == "" {
-			return fmt.Errorf("config: app %q is missing 'feishu_verification_token'", app.ID)
-		}
 		if app.WorkspaceDir == "" {
 			return fmt.Errorf("config: app %q is missing 'workspace_dir'", app.ID)
 		}

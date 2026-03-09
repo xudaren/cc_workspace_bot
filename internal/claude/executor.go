@@ -24,6 +24,8 @@ type ExecuteRequest struct {
 	ClaudeSessionID string // empty = new context (no --resume)
 	AppConfig       *config.AppConfig
 	WorkspaceDir    string
+	ChannelKey      string // used to derive routing_key for feishu_ops
+	SenderID        string // sender's open_id, for p2p feishu_ops calls
 }
 
 // ExecuteResult holds the output of a claude CLI invocation.
@@ -60,7 +62,10 @@ func (e *Executor) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteRe
 		return nil, fmt.Errorf("write session context: %w", err)
 	}
 
-	args := e.buildArgs(req, sessionDir)
+	// Inject routing metadata directly into the prompt to avoid file-based race
+	// conditions when multiple goroutines write SESSION_CONTEXT.md concurrently.
+	promptWithCtx := injectRoutingContext(req)
+	args := e.buildArgs(promptWithCtx, req, sessionDir)
 
 	timeout := time.Duration(e.cfg.Claude.TimeoutMinutes) * time.Minute
 	ctx, cancel := context.WithTimeout(ctx, timeout)
@@ -73,6 +78,7 @@ func (e *Executor) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteRe
 	cmd.Env = append(os.Environ(),
 		"TERM=xterm-256color",
 		"FORCE_COLOR=0",
+		"WORKSPACE_DIR="+req.WorkspaceDir,
 	)
 
 	stdout, err := cmd.StdoutPipe()
@@ -89,13 +95,20 @@ func (e *Executor) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteRe
 	}
 
 	// H-5: drain stderr in a goroutine and wait for it to finish.
-	var stderrWg sync.WaitGroup
+	var (
+		stderrWg   sync.WaitGroup
+		stderrLines []string
+		stderrMu    sync.Mutex
+	)
 	stderrWg.Add(1)
 	go func() {
 		defer stderrWg.Done()
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
-			slog.Debug("claude stderr", "line", sc.Text())
+			line := sc.Text()
+			stderrMu.Lock()
+			stderrLines = append(stderrLines, line)
+			stderrMu.Unlock()
 		}
 	}()
 
@@ -114,10 +127,12 @@ func (e *Executor) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteRe
 	}
 
 	if err := cmd.Wait(); err != nil {
+		// Join stderr goroutine first so stderrLines is fully populated.
+		stderrWg.Wait()
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("claude timed out after %d minutes", e.cfg.Claude.TimeoutMinutes)
 		}
-		slog.Warn("claude exited with error", "err", err)
+		slog.Warn("claude exited with error", "err", err, "stderr", strings.Join(stderrLines, "\n"))
 	}
 
 	// Join the stderr goroutine after Wait() so it has had a chance to drain.
@@ -126,12 +141,23 @@ func (e *Executor) Execute(ctx context.Context, req *ExecuteRequest) (*ExecuteRe
 	return result, nil
 }
 
+// injectRoutingContext prepends a hidden system context block with routing_key
+// and sender_id directly into the prompt. This avoids SESSION_CONTEXT.md race
+// conditions when concurrent goroutines write to the same session directory.
+func injectRoutingContext(req *ExecuteRequest) string {
+	if req.ChannelKey == "" && req.SenderID == "" {
+		return req.Prompt
+	}
+	return fmt.Sprintf("<system_routing>\nrouting_key: %s\nsender_id: %s\n</system_routing>\n\n%s",
+		channelKeyToRoutingKey(req.ChannelKey), req.SenderID, req.Prompt)
+}
+
 // buildArgs constructs the claude CLI argument list.
-func (e *Executor) buildArgs(req *ExecuteRequest, sessionDir string) []string {
+func (e *Executor) buildArgs(prompt string, req *ExecuteRequest, sessionDir string) []string {
 	args := []string{
-		"-p", req.Prompt,
-		"--cwd", sessionDir,
+		"-p", prompt,
 		"--output-format", "stream-json",
+		"--verbose",
 		"--permission-mode", permissionMode(req.AppConfig),
 		"--max-turns", fmt.Sprintf("%d", e.cfg.Claude.MaxTurns),
 	}
@@ -231,6 +257,33 @@ func writeSessionContext(sessionDir string, req *ExecuteRequest) error {
 
 	path := filepath.Join(sessionDir, "SESSION_CONTEXT.md")
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+// channelKeyToRoutingKey converts a channel_key to a feishu_ops routing_key.
+//
+// channel_key formats (internal):
+//
+//	p2p:{open_id}:{app_id}              → p2p:{open_id}
+//	group:{chat_id}:{app_id}            → group:{chat_id}
+//	thread:{chat_id}:{thread_id}:{app_id} → group:{chat_id}  (send target is the chat)
+func channelKeyToRoutingKey(channelKey string) string {
+	parts := strings.SplitN(channelKey, ":", 4)
+	switch parts[0] {
+	case "p2p":
+		if len(parts) >= 2 {
+			return "p2p:" + parts[1]
+		}
+	case "group":
+		if len(parts) >= 2 {
+			return "group:" + parts[1]
+		}
+	case "thread":
+		// thread:{chat_id}:{thread_id}:{app_id} → group:{chat_id}
+		if len(parts) >= 2 {
+			return "group:" + parts[1]
+		}
+	}
+	return channelKey
 }
 
 func permissionMode(appCfg *config.AppConfig) string {
