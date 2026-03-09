@@ -88,3 +88,165 @@ func TestInjectRoutingContext(t *testing.T) {
 		}
 	})
 }
+
+func TestResolveModel(t *testing.T) {
+	tests := []struct {
+		name       string
+		appModel   string
+		globalModel string
+		want       string
+	}{
+		{
+			name:        "app-level model takes priority over global",
+			appModel:    "opus",
+			globalModel: "haiku",
+			want:        "opus",
+		},
+		{
+			name:        "falls back to global when app model is empty",
+			appModel:    "",
+			globalModel: "sonnet",
+			want:        "sonnet",
+		},
+		{
+			name:        "returns empty when both unset",
+			appModel:    "",
+			globalModel: "",
+			want:        "",
+		},
+		{
+			name:        "trims whitespace from app model",
+			appModel:    "  sonnet  ",
+			globalModel: "opus",
+			want:        "sonnet",
+		},
+		{
+			name:        "whitespace-only app model falls back to global",
+			appModel:    "   ",
+			globalModel: "haiku",
+			want:        "haiku",
+		},
+		{
+			name:        "trims whitespace from global model",
+			appModel:    "",
+			globalModel: "  opus  ",
+			want:        "opus",
+		},
+		{
+			name:        "full model ID accepted",
+			appModel:    "claude-sonnet-4-6",
+			globalModel: "",
+			want:        "claude-sonnet-4-6",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			appCfg := &config.AppConfig{
+				Claude: config.AppClaudeConfig{Model: tt.appModel},
+			}
+			cfg := &config.Config{
+				Claude: config.ClaudeConfig{Model: tt.globalModel},
+			}
+			got := resolveModel(appCfg, cfg)
+			if got != tt.want {
+				t.Errorf("resolveModel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildArgs_Model(t *testing.T) {
+	baseCfg := &config.Config{
+		Claude: config.ClaudeConfig{MaxTurns: 20},
+	}
+	baseApp := &config.AppConfig{
+		Claude: config.AppClaudeConfig{PermissionMode: "acceptEdits"},
+	}
+
+	t.Run("--model flag present when global model set", func(t *testing.T) {
+		cfg := &config.Config{
+			Claude: config.ClaudeConfig{MaxTurns: 20, Model: "sonnet"},
+		}
+		e := &Executor{cfg: cfg}
+		req := &ExecuteRequest{AppConfig: baseApp}
+		args := e.buildArgs("hi", req, "/tmp/session")
+		assertHasFlag(t, args, "--model", "sonnet")
+	})
+
+	t.Run("--model flag present when app model set", func(t *testing.T) {
+		appCfg := &config.AppConfig{
+			Claude: config.AppClaudeConfig{
+				PermissionMode: "acceptEdits",
+				Model:          "opus",
+			},
+		}
+		e := &Executor{cfg: baseCfg}
+		req := &ExecuteRequest{AppConfig: appCfg}
+		args := e.buildArgs("hi", req, "/tmp/session")
+		assertHasFlag(t, args, "--model", "opus")
+	})
+
+	t.Run("app model overrides global in args", func(t *testing.T) {
+		cfg := &config.Config{
+			Claude: config.ClaudeConfig{MaxTurns: 20, Model: "haiku"},
+		}
+		appCfg := &config.AppConfig{
+			Claude: config.AppClaudeConfig{
+				PermissionMode: "acceptEdits",
+				Model:          "opus",
+			},
+		}
+		e := &Executor{cfg: cfg}
+		req := &ExecuteRequest{AppConfig: appCfg}
+		args := e.buildArgs("hi", req, "/tmp/session")
+		assertHasFlag(t, args, "--model", "opus")
+	})
+
+	t.Run("no --model flag when both unset", func(t *testing.T) {
+		e := &Executor{cfg: baseCfg}
+		req := &ExecuteRequest{AppConfig: baseApp}
+		args := e.buildArgs("hi", req, "/tmp/session")
+		assertNoFlag(t, args, "--model")
+	})
+
+	t.Run("no --model flag when model is whitespace only", func(t *testing.T) {
+		cfg := &config.Config{
+			Claude: config.ClaudeConfig{MaxTurns: 20, Model: "   "},
+		}
+		e := &Executor{cfg: cfg}
+		req := &ExecuteRequest{AppConfig: baseApp}
+		args := e.buildArgs("hi", req, "/tmp/session")
+		assertNoFlag(t, args, "--model")
+	})
+}
+
+// assertHasFlag checks that args contains "--flag value" in sequence.
+func assertHasFlag(t *testing.T, args []string, flag, value string) {
+	t.Helper()
+	for i, a := range args {
+		if a == flag {
+			if i+1 >= len(args) {
+				t.Errorf("flag %q has no value", flag)
+				return
+			}
+			if args[i+1] != value {
+				t.Errorf("flag %q = %q, want %q", flag, args[i+1], value)
+			}
+			return
+		}
+	}
+	t.Errorf("flag %q not found in args: %v", flag, args)
+}
+
+// assertNoFlag checks that args does not contain the given flag.
+func assertNoFlag(t *testing.T, args []string, flag string) {
+	t.Helper()
+	for _, a := range args {
+		if a == flag {
+			t.Errorf("flag %q should not be present in args: %v", flag, args)
+			return
+		}
+	}
+}
+

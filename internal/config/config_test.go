@@ -229,3 +229,61 @@ func TestLoad_FileNotFound(t *testing.T) {
 		t.Error("Load() with missing file should return error")
 	}
 }
+
+func TestLoad_ModelConfig(t *testing.T) {
+	yaml := `
+apps:
+  - id: "light-app"
+    feishu_app_id: "cli_a"
+    feishu_app_secret: "s"
+    workspace_dir: "/tmp/a"
+    claude:
+      model: "haiku"
+  - id: "heavy-app"
+    feishu_app_id: "cli_b"
+    feishu_app_secret: "s"
+    workspace_dir: "/tmp/b"
+    claude:
+      model: "opus"
+  - id: "default-app"
+    feishu_app_id: "cli_c"
+    feishu_app_secret: "s"
+    workspace_dir: "/tmp/c"
+claude:
+  model: "sonnet"
+`
+	f := writeTemp(t, yaml)
+	cfg, err := config.Load(f)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.Claude.Model != "sonnet" {
+		t.Errorf("global model = %q, want %q", cfg.Claude.Model, "sonnet")
+	}
+
+	appByID := make(map[string]config.AppConfig)
+	for _, a := range cfg.Apps {
+		appByID[a.ID] = a
+	}
+
+	if m := appByID["light-app"].Claude.Model; m != "haiku" {
+		t.Errorf("light-app model = %q, want %q", m, "haiku")
+	}
+	if m := appByID["heavy-app"].Claude.Model; m != "opus" {
+		t.Errorf("heavy-app model = %q, want %q", m, "opus")
+	}
+	if m := appByID["default-app"].Claude.Model; m != "" {
+		t.Errorf("default-app model = %q, want empty", m)
+	}
+}
+
+// writeTemp writes YAML content to a temp file and returns its path.
+func writeTemp(t *testing.T, yaml string) string {
+	t.Helper()
+	f := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(f, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}

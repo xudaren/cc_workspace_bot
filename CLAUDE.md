@@ -141,6 +141,7 @@ apps:
         - "Read"
         - "Edit"
         - "Write"
+      # model: "sonnet"   # 覆盖全局默认模型（可选）
 
 server:
   port: 8080
@@ -148,6 +149,7 @@ server:
 claude:
   timeout_minutes: 5
   max_turns: 20
+  # model: "sonnet"   # 全局默认模型；别名: sonnet/opus/haiku，或完整 ID: claude-sonnet-4-6
 
 session:
   worker_idle_timeout_minutes: 30   # Worker 空闲超时

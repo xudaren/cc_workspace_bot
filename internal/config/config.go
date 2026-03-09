@@ -44,6 +44,10 @@ func (a *AppConfig) AllowedChat(chatID string) bool {
 type AppClaudeConfig struct {
 	PermissionMode string   `mapstructure:"permission_mode"`
 	AllowedTools   []string `mapstructure:"allowed_tools"`
+	// Model overrides the global claude.model for this app.
+	// Accepts aliases (sonnet, opus, haiku) or full model IDs (claude-sonnet-4-6).
+	// Empty means use the global default.
+	Model string `mapstructure:"model"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -55,6 +59,10 @@ type ServerConfig struct {
 type ClaudeConfig struct {
 	TimeoutMinutes int `mapstructure:"timeout_minutes"`
 	MaxTurns       int `mapstructure:"max_turns"`
+	// Model sets the default model for all apps.
+	// Accepts aliases (sonnet, opus, haiku) or full model IDs (claude-sonnet-4-6).
+	// Can be overridden per-app via apps[].claude.model.
+	Model string `mapstructure:"model"`
 }
 
 // SessionConfig holds session worker settings.

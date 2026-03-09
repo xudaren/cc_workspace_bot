@@ -13,6 +13,7 @@ apps:
         - "Read"
         - "Edit"
         - "Write"
+      # model: "sonnet"   # 覆盖全局默认模型（可选）
 
   # - id: "code-review"
   #   feishu_app_id: "cli_yyy"
@@ -24,6 +25,7 @@ apps:
   #     - "oc_abc123"
   #   claude:
   #     permission_mode: "acceptEdits"
+  #     model: "opus"     # 该 workspace 使用 opus（重任务用更强模型）
   #     allowed_tools:
   #       - "Read"
   #       - "Bash"
@@ -34,6 +36,8 @@ server:
 claude:
   timeout_minutes: 5
   max_turns: 20
+  # model: "sonnet"   # 全局默认模型；别名: sonnet/opus/haiku，或完整 ID: claude-sonnet-4-6
+  #                   # 不填则沿用 claude CLI 内置默认值
 
 session:
   worker_idle_timeout_minutes: 30

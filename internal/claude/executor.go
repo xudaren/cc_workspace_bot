@@ -162,6 +162,10 @@ func (e *Executor) buildArgs(prompt string, req *ExecuteRequest, sessionDir stri
 		"--max-turns", fmt.Sprintf("%d", e.cfg.Claude.MaxTurns),
 	}
 
+	if model := resolveModel(req.AppConfig, e.cfg); model != "" {
+		args = append(args, "--model", model)
+	}
+
 	if req.ClaudeSessionID != "" {
 		args = append(args, "--resume", req.ClaudeSessionID)
 	}
@@ -291,4 +295,14 @@ func permissionMode(appCfg *config.AppConfig) string {
 		return appCfg.Claude.PermissionMode
 	}
 	return "acceptEdits"
+}
+
+// resolveModel returns the effective model for this request.
+// App-level setting takes priority over the global default.
+// Returns empty string when neither is set (claude uses its built-in default).
+func resolveModel(appCfg *config.AppConfig, cfg *config.Config) string {
+	if m := strings.TrimSpace(appCfg.Claude.Model); m != "" {
+		return m
+	}
+	return strings.TrimSpace(cfg.Claude.Model)
 }

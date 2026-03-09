@@ -528,6 +528,7 @@ apps:
     allowed_chats: []                   # 白名单 chat_id 列表，空表示不限制
     claude:
       permission_mode: "acceptEdits"    # acceptEdits（推荐）或 bypassPermissions
+      model: ""                         # 覆盖全局默认模型（可选）；别名: sonnet/opus/haiku
       allowed_tools:                    # 允许 Claude 使用的工具，空表示不限制
         - "Bash"
         - "Read"
@@ -558,6 +559,8 @@ server:
 claude:
   timeout_minutes: 5                    # 单次 claude 执行超时（分钟）
   max_turns: 20                         # claude CLI --max-turns 参数
+  model: ""                             # 全局默认模型；别名: sonnet/opus/haiku，或完整 ID: claude-sonnet-4-6
+                                        # 不填则沿用 claude CLI 内置默认值；可被 apps[].claude.model 覆盖
 
 session:
   worker_idle_timeout_minutes: 30       # Worker 空闲超时，触发 session 归档
@@ -572,6 +575,7 @@ cleanup:
 
 - **`permission_mode`**：`acceptEdits` 自动接受文件编辑操作（推荐生产环境）；`bypassPermissions` 跳过所有权限确认（高风险，仅测试用）
 - **`allowed_tools`**：限制 Claude 可用的工具，建议按最小权限原则配置
+- **`model`**：指定 Claude 使用的模型。支持别名（`sonnet`/`opus`/`haiku`）或完整 model ID（`claude-sonnet-4-6`）。全局 `claude.model` 设置所有应用的默认值，`apps[].claude.model` 可按场景覆盖（如对话助手用 `haiku` 省成本，代码分析用 `opus` 提精度）。不填则沿用 claude CLI 内置默认值
 - **`allowed_chats`**：留空则该应用接受所有来源的消息；填写后只处理白名单内的 chat_id
 - **`encrypt_key`**：飞书消息加密配置，企业安全要求高时建议开启
 
