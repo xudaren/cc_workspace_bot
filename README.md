@@ -21,6 +21,8 @@
   - [饮食管理：热量追踪 + 营养分析 + 定期报告](#案例四饮食管理热量追踪--营养分析--定期报告)
 - [前置要求](#前置要求)
 - [快速开始](#快速开始)
+  - [安装 Git](#安装-git)
+  - [安装 Go 环境](#安装-go-环境)
   - [安装](#安装)
   - [配置](#配置)
   - [初始化 Workspace](#初始化-workspace)
@@ -348,6 +350,169 @@ claude  # 首次运行，按提示完成 Anthropic 账号认证
 ---
 
 ## 快速开始
+
+### 安装 Git
+
+> 如果已安装 Git（`git --version` 验证），可跳过此步骤。
+
+#### macOS
+
+```bash
+# 方式一：Homebrew（推荐）
+brew install git
+
+# 方式二：安装 Xcode Command Line Tools（会自带 git）
+xcode-select --install
+
+# 验证
+git --version
+```
+
+#### Linux
+
+```bash
+# Ubuntu / Debian
+sudo apt update && sudo apt install -y git
+
+# Arch Linux
+sudo pacman -S git
+
+# Fedora / RHEL
+sudo dnf install -y git
+
+# 验证
+git --version
+```
+
+#### Windows
+
+**方式一：官方安装包（推荐）**
+
+1. 访问 [https://git-scm.com/download/win](https://git-scm.com/download/win)，下载并运行安装程序
+2. 安装时默认选项即可；「Default editor」可选 VS Code 或 Notepad++
+3. 安装完成后打开 **Git Bash** 验证：
+
+```bash
+git --version
+```
+
+**方式二：Winget**
+
+```powershell
+winget install Git.Git
+
+# 重新打开终端后验证
+git --version
+```
+
+> Windows 推荐使用安装 Git 时自带的 **Git Bash** 来运行项目中的 Shell 脚本（`start.sh`、`init_workspace.sh`）。
+
+---
+
+### 安装 Go 环境
+
+> 如果已安装 Go 1.23+（`go version` 验证），可跳过此步骤。
+
+#### macOS
+
+**方式一：Homebrew（推荐）**
+
+```bash
+# 安装 Homebrew（如尚未安装）
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# 安装 Go
+brew install go
+
+# 验证
+go version  # 应输出 go1.23.x 或更高版本
+```
+
+**方式二：官方安装包**
+
+1. 访问 [https://go.dev/dl/](https://go.dev/dl/)，下载 `go1.23.x.darwin-arm64.pkg`（Apple Silicon）或 `go1.23.x.darwin-amd64.pkg`（Intel）
+2. 双击 `.pkg` 文件，按向导完成安装（默认安装到 `/usr/local/go`）
+3. 打开新终端验证：
+
+```bash
+go version
+```
+
+---
+
+#### Linux
+
+**方式一：官方二进制包（推荐，适用所有发行版）**
+
+```bash
+# 下载（以 amd64 为例，ARM 替换为 linux-arm64）
+curl -LO https://go.dev/dl/go1.23.8.linux-amd64.tar.gz
+
+# 解压到 /usr/local（会覆盖旧版本）
+sudo rm -rf /usr/local/go
+sudo tar -C /usr/local -xzf go1.23.8.linux-amd64.tar.gz
+
+# 配置 PATH（写入 ~/.bashrc 或 ~/.zshrc）
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# 验证
+go version
+```
+
+**方式二：包管理器**
+
+```bash
+# Ubuntu / Debian（系统源版本可能较旧，建议用方式一）
+sudo apt update && sudo apt install -y golang-go
+
+# Arch Linux
+sudo pacman -S go
+
+# Fedora / RHEL
+sudo dnf install -y golang
+```
+
+---
+
+#### Windows
+
+**方式一：官方安装包（推荐）**
+
+1. 访问 [https://go.dev/dl/](https://go.dev/dl/)，下载 `go1.23.x.windows-amd64.msi`
+2. 双击运行安装程序，一路「Next」完成安装（默认安装到 `C:\Program Files\Go`）
+3. 安装程序会自动配置 `PATH`，打开新的 PowerShell 或命令提示符验证：
+
+```powershell
+go version
+```
+
+**方式二：Scoop（包管理器）**
+
+```powershell
+# 安装 Scoop（如尚未安装）
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+irm get.scoop.sh | iex
+
+# 安装 Go
+scoop install go
+
+# 验证
+go version
+```
+
+**方式三：Winget**
+
+```powershell
+winget install GoLang.Go
+
+# 重新打开终端后验证
+go version
+```
+
+> Windows 用户建议使用 **Git Bash** 或 **WSL2**（Ubuntu）运行后续 Shell 脚本（`start.sh`、`init_workspace.sh`），PowerShell 也可直接运行 `go` 命令。
+
+---
 
 ### 安装
 
